@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KoG Testing Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div class="page-bg page-bg-one"></div>
+    <div class="page-bg page-bg-two"></div>
+
+    <div class="app-shell">
+      <header class="app-header">
+        <div>
+          <h1>KoG Testing Assistant</h1>
+          <p>
+            Upload a <code>.map</code>, grab crops from an interactive map view,
+            annotate them, and export one Discord-ready vertical report.
+          </p>
+        </div>
+        <div class="header-badge" id="map-name-badge">No map loaded</div>
+      </header>
+
+      <main class="workspace-grid">
+        <section class="panel viewer-panel">
+          <div class="panel-title-row">
+            <h2>Map Viewer</h2>
+            <p>Pan and zoom freely, then capture rectangle or lasso crops.</p>
+          </div>
+
+          <div class="toolbar toolbar-main">
+            <label class="file-btn file-btn-cta">
+              <input id="map-upload" type="file" accept=".map" />
+              <span>Open Map (.map)</span>
+            </label>
+
+            <button id="export-report-btn" class="primary-btn primary-btn-cta" type="button">
+              Export Final PNG
+            </button>
+
+            <details class="settings-menu">
+              <summary>Settings</summary>
+              <div class="settings-content">
+                <label class="select-wrap select-wrap-compact">
+                  <span>Mapres</span>
+                  <select id="mapres-mode">
+                    <option value="bundled">Bundled + Remote Fallback</option>
+                    <option value="embedded">Embedded Only</option>
+                  </select>
+                </label>
+
+                <label class="settings-check">
+                  <input id="auto-capture-toggle" type="checkbox" />
+                  <span>Auto-add screenshot after selection</span>
+                </label>
+
+                <button id="save-project-btn" class="ghost-btn settings-btn" type="button">
+                  Save Project JSON
+                </button>
+
+                <label class="file-btn ghost-btn settings-btn">
+                  <input id="load-project" type="file" accept="application/json" />
+                  <span>Load Project JSON</span>
+                </label>
+              </div>
+            </details>
+          </div>
+
+          <div class="toolbar toolbar-capture">
+            <span class="tool-label">Capture Tool</span>
+            <button id="tool-rect" class="tool-btn is-active" type="button">
+              Rectangle
+            </button>
+            <button id="tool-lasso" class="tool-btn" type="button">Lasso</button>
+            <span class="toolbar-separator" aria-hidden="true"></span>
+            <button id="clear-selection" class="ghost-btn" type="button">
+              Clear Selection
+            </button>
+            <button id="capture-btn" class="primary-btn" type="button" disabled>
+              Add Screenshot
+            </button>
+          </div>
+
+          <div class="viewer-stage" id="viewer-stage">
+            <canvas id="map-canvas"></canvas>
+            <canvas id="selection-canvas"></canvas>
+            <div class="viewer-hint" id="viewer-hint">
+              Upload a map to start the interactive viewer.
+            </div>
+          </div>
+        </section>
+
+        <section class="panel shots-panel">
+          <div class="panel-title-row">
+            <h2>Screenshots</h2>
+            <p>
+              Each screenshot includes title, notes, annotation tools, and
+              reorder controls.
+            </p>
+          </div>
+
+          <div id="shots-list" class="shots-list"></div>
+        </section>
+
+        <footer class="app-footer">
+          Powered by <a href="https://gitlab.com/ddnet-rs/twgpu" target="_blank" rel="noopener noreferrer">twgpu / twgpu-tools</a>
+          and <a href="https://gitlab.com/ddnet-rs/twgpu/-/tree/master/map-inspect-web" target="_blank" rel="noopener noreferrer">map-inspect-web</a>.
+          Created by CAKExSNIFFERx42.
+        </footer>
+      </main>
+    </div>
+
+    <template id="shot-card-template">
+      <article class="shot-card">
+        <div class="shot-card-head">
+          <div class="shot-title-wrap">
+            <input class="shot-title" type="text" value="Screenshot" />
+            <div class="shot-coordinates">X: --, Y: --</div>
+          </div>
+          <div class="shot-card-actions">
+            <button class="move-up ghost-btn" type="button">Up</button>
+            <button class="move-down ghost-btn" type="button">Down</button>
+            <button class="delete-shot danger-btn" type="button">Delete</button>
+          </div>
+        </div>
+
+        <div class="annotation-toolbar">
+          <button class="anno-tool is-active" data-tool="pen" type="button">
+            Pen
+          </button>
+          <button class="anno-tool" data-tool="highlight" type="button">
+            Highlight
+          </button>
+          <button class="anno-tool" data-tool="arrow" type="button">
+            Arrow
+          </button>
+          <button class="anno-tool" data-tool="rect" type="button">Rect</button>
+          <button class="anno-tool" data-tool="text" type="button">Text</button>
+          <button class="anno-tool" data-tool="eraser" type="button">
+            Eraser
+          </button>
+          <span class="annotation-separator" aria-hidden="true"></span>
+          <button class="anno-tool anno-undo" type="button">Undo</button>
+          <button class="anno-tool anno-redo" type="button">Redo</button>
+          <label>
+            Color
+            <input class="anno-color" type="color" value="#ff5f2e" />
+          </label>
+          <label>
+            Size
+            <input class="anno-size" type="range" min="1" max="48" value="5" />
+          </label>
+        </div>
+
+        <div class="shot-body">
+          <div class="shot-canvas-wrap">
+            <canvas class="shot-canvas"></canvas>
+          </div>
+          <textarea
+            class="shot-notes"
+            placeholder="Write extra context for this screenshot..."
+          ></textarea>
+        </div>
+      </article>
+    </template>
+
+    <div id="map-switch-modal" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="map-switch-title">
+        <h3 id="map-switch-title">Load Different Map?</h3>
+        <p>
+          You already have screenshots in this session. Keep them, clear them,
+          or cancel map switching.
+        </p>
+        <div class="modal-actions">
+          <button id="map-switch-clear" class="primary-btn" type="button">
+            Clear Screenshots
+          </button>
+          <button id="map-switch-keep" class="ghost-btn" type="button">
+            Keep Screenshots
+          </button>
+          <button id="map-switch-cancel" class="ghost-btn" type="button">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
