@@ -38,6 +38,7 @@ export class EntityOverlay {
 
     this.mapLoaded = false;
     this.physicsLayers = null;
+    this.preparedPhysicsLayers = null;
 
     this.viewMode = "design";
     this.mixedOpacity = 0.55;
@@ -59,6 +60,7 @@ export class EntityOverlay {
     this.atlasImage = null;
     this.atlasTileWidth = 64;
     this.atlasTileHeight = 64;
+    this.spriteTiles = [];
 
     this._raf = null;
     this._needsRender = true;
@@ -79,6 +81,7 @@ export class EntityOverlay {
 
   setPhysicsLayers(physicsLayers) {
     this.physicsLayers = physicsLayers;
+    this.preparedPhysicsLayers = this.#preparePhysicsLayers(physicsLayers);
     this._needsRender = true;
   }
 
@@ -171,7 +174,107 @@ export class EntityOverlay {
     this.atlasImage = image;
     this.atlasTileWidth = Math.max(1, Math.floor(image.width / SPRITES_PER_ROW));
     this.atlasTileHeight = Math.max(1, Math.floor(image.height / SPRITES_PER_ROW));
+    this.#buildSpriteCache();
     this._needsRender = true;
+  }
+
+  #buildSpriteCache() {
+    const maxTiles = SPRITES_PER_ROW * SPRITES_PER_ROW;
+    const tiles = new Array(maxTiles).fill(null);
+
+    for (let tileId = 0; tileId < maxTiles; tileId += 1) {
+      const spriteX = tileId % SPRITES_PER_ROW;
+      const spriteY = Math.floor(tileId / SPRITES_PER_ROW);
+      const sourceX = spriteX * this.atlasTileWidth;
+      const sourceY = spriteY * this.atlasTileHeight;
+
+      if (
+        sourceX + this.atlasTileWidth > this.atlasImage.width ||
+        sourceY + this.atlasTileHeight > this.atlasImage.height
+      ) {
+        continue;
+      }
+
+      const spriteCanvas = document.createElement("canvas");
+      spriteCanvas.width = this.atlasTileWidth;
+      spriteCanvas.height = this.atlasTileHeight;
+      const spriteCtx = spriteCanvas.getContext("2d", { alpha: true });
+      spriteCtx.imageSmoothingEnabled = false;
+      spriteCtx.drawImage(
+        this.atlasImage,
+        sourceX,
+        sourceY,
+        this.atlasTileWidth,
+        this.atlasTileHeight,
+        0,
+        0,
+        this.atlasTileWidth,
+        this.atlasTileHeight
+      );
+      tiles[tileId] = spriteCanvas;
+    }
+
+    this.spriteTiles = tiles;
+  }
+
+  #preparePhysicsLayers(physicsLayers) {
+    if (!physicsLayers?.width || !physicsLayers?.height) {
+      return null;
+    }
+
+    const width = physicsLayers.width;
+    const height = physicsLayers.height;
+    const preparedLayers = {
+      game: null,
+      front: null,
+      tele: null,
+      speedup: null,
+      switch: null,
+      tune: null
+    };
+
+    for (const [key, layer] of Object.entries(physicsLayers.layers ?? {})) {
+      preparedLayers[key] = this.#prepareLayerRows(layer, width, height);
+    }
+
+    return {
+      width,
+      height,
+      layers: preparedLayers
+    };
+  }
+
+  #prepareLayerRows(layer, width, height) {
+    if (!layer?.ids) {
+      return null;
+    }
+
+    const rows = Array.from({ length: height }, () => []);
+    const ids = layer.ids;
+    const numbers = layer.numbers ?? null;
+    const totalTiles = Math.min(ids.length, width * height);
+
+    for (let tileIndex = 0; tileIndex < totalTiles; tileIndex += 1) {
+      const tileId = ids[tileIndex] ?? 0;
+      if (tileId <= 0) {
+        continue;
+      }
+
+      const y = Math.floor(tileIndex / width);
+      const x = tileIndex - y * width;
+      const number = numbers ? numbers[tileIndex] ?? 0 : 0;
+
+      if (number > 0) {
+        rows[y].push({ x, id: tileId, number });
+      } else {
+        rows[y].push({ x, id: tileId, number: 0 });
+      }
+    }
+
+    return {
+      kind: layer.kind,
+      rows
+    };
   }
 
   #applyViewMode() {
@@ -231,7 +334,7 @@ export class EntityOverlay {
       return;
     }
 
-    if (!this.mapLoaded || !this.atlasImage || !this.physicsLayers || !viewBounds) {
+    if (!this.mapLoaded || !this.atlasImage || !this.preparedPhysicsLayers || !viewBounds) {
       return;
     }
 
@@ -269,14 +372,16 @@ export class EntityOverlay {
   }
 
   #renderLayers(bounds) {
-    const width = this.physicsLayers.width;
-    const height = this.physicsLayers.height;
+    const width = this.preparedPhysicsLayers.width;
+    const height = this.preparedPhysicsLayers.height;
     if (!width || !height) {
       return;
     }
 
     const scaleX = this.entityCanvas.width / bounds.width;
     const scaleY = this.entityCanvas.height / bounds.height;
+    const offsetX = -bounds.left * scaleX;
+    const offsetY = -bounds.top * scaleY;
 
     const tileDrawWidth = Math.max(0.01, scaleX);
     const tileDrawHeight = Math.max(0.01, scaleY);
@@ -290,26 +395,39 @@ export class EntityOverlay {
     const drawOrder = ["game", "front", "tele", "speedup", "switch", "tune"];
 
     for (const layerKey of drawOrder) {
-      const layer = this.physicsLayers.layers[layerKey];
+      const layer = this.preparedPhysicsLayers.layers[layerKey];
       if (!shouldDrawLayer(layer, this.layerVisibility)) {
         continue;
       }
 
       for (let y = minY; y <= maxY; y += 1) {
-        for (let x = minX; x <= maxX; x += 1) {
-          const tileIndex = y * width + x;
-          const tileId = layer.ids?.[tileIndex] ?? 0;
-          if (tileId <= 0) {
+        const row = layer.rows[y];
+        if (!row || row.length === 0) {
+          continue;
+        }
+
+        for (const entry of row) {
+          if (entry.x < minX) {
             continue;
           }
+          if (entry.x > maxX) {
+            break;
+          }
 
-          this.#drawTile(tileId, x, y, bounds, tileDrawWidth, tileDrawHeight);
+          this.#drawTile(
+            entry.id,
+            entry.x,
+            y,
+            offsetX,
+            offsetY,
+            scaleX,
+            scaleY,
+            tileDrawWidth,
+            tileDrawHeight
+          );
 
-          if (this.showNumbers) {
-            const number = layer.numbers?.[tileIndex] ?? 0;
-            if (number > 0) {
-              overlayNumbers.push({ x, y, number });
-            }
+          if (this.showNumbers && entry.number > 0) {
+            overlayNumbers.push({ x: entry.x, y, number: entry.number });
           }
         }
       }
@@ -320,33 +438,31 @@ export class EntityOverlay {
     }
   }
 
-  #drawTile(tileId, tileX, tileY, bounds, tileDrawWidth, tileDrawHeight) {
-    const spriteIndex = tileId;
-    if (spriteIndex < 0) {
+  #drawTile(
+    tileId,
+    tileX,
+    tileY,
+    offsetX,
+    offsetY,
+    scaleX,
+    scaleY,
+    tileDrawWidth,
+    tileDrawHeight
+  ) {
+    if (tileId < 0) {
       return;
     }
 
-    const spriteX = spriteIndex % SPRITES_PER_ROW;
-    const spriteY = Math.floor(spriteIndex / SPRITES_PER_ROW);
-    const sourceX = spriteX * this.atlasTileWidth;
-    const sourceY = spriteY * this.atlasTileHeight;
-
-    if (
-      sourceX + this.atlasTileWidth > this.atlasImage.width ||
-      sourceY + this.atlasTileHeight > this.atlasImage.height
-    ) {
+    const sprite = this.spriteTiles[tileId] ?? null;
+    if (!sprite) {
       return;
     }
 
-    const drawX = (tileX - bounds.left) * (this.entityCanvas.width / bounds.width);
-    const drawY = (tileY - bounds.top) * (this.entityCanvas.height / bounds.height);
+    const drawX = tileX * scaleX + offsetX;
+    const drawY = tileY * scaleY + offsetY;
 
     this.ctx.drawImage(
-      this.atlasImage,
-      sourceX,
-      sourceY,
-      this.atlasTileWidth,
-      this.atlasTileHeight,
+      sprite,
       drawX,
       drawY,
       tileDrawWidth,

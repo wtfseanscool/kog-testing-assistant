@@ -39,6 +39,7 @@ const layerSwitchToggle = document.querySelector("#layer-switch");
 const layerTuneToggle = document.querySelector("#layer-tune");
 const entitiesUploadInput = document.querySelector("#entities-upload");
 const entitiesResetBtn = document.querySelector("#entities-reset");
+const settingsMenu = document.querySelector(".settings-menu");
 
 const AUTOSAVE_KEY = "kog-testing-assistant:autosave:v1";
 const SWITCH_DB_NAME = "kog-testing-assistant-switch";
@@ -286,6 +287,14 @@ function queueAutosave() {
   }, 220);
 }
 
+function updateClearRecoveryButtonVisibility() {
+  if (!clearRecoveryBtn) {
+    return;
+  }
+
+  clearRecoveryBtn.hidden = !screenshotManager.hasScreenshots();
+}
+
 function openSwitchDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(SWITCH_DB_NAME, 1);
@@ -449,12 +458,10 @@ async function restoreAutosaveDraft() {
     if (project.screenshots.length > 0) {
       await screenshotManager.loadSerializableProject(project.screenshots);
       mapNameBadge.textContent = `Recovered: ${state.mapName}`;
-      if (clearRecoveryBtn) {
-        clearRecoveryBtn.hidden = false;
-      }
       viewerHint.textContent =
         "Draft restored from browser cache. Upload a map to capture additional screenshots.";
     }
+    updateClearRecoveryButtonVisibility();
   } catch (error) {
     console.warn("Could not restore autosave draft.", error);
   }
@@ -501,6 +508,7 @@ async function loadMapFromArrayBuffer(arrayBuffer, fileName) {
 
     viewerHint.textContent =
       "Hold Shift or right-drag to select. Plain left-drag pans the map. Mouse wheel zooms.";
+    updateClearRecoveryButtonVisibility();
     queueAutosave();
   } finally {
     mapLoadInProgress = false;
@@ -648,6 +656,7 @@ async function onLoadProject() {
 
     mapNameBadge.textContent = `Project: ${state.mapName}`;
     await screenshotManager.loadSerializableProject(project.screenshots);
+    updateClearRecoveryButtonVisibility();
     queueAutosave();
     alert("Project loaded. You can continue editing and export immediately.");
   } catch (error) {
@@ -691,8 +700,23 @@ saveProjectBtn.addEventListener("click", onSaveProject);
 exportReportBtn.addEventListener("click", onExportReport);
 
 screenshotManager.setOnChange(() => {
+  updateClearRecoveryButtonVisibility();
   queueAutosave();
 });
+
+if (settingsMenu) {
+  document.addEventListener("click", (event) => {
+    if (!settingsMenu.open) {
+      return;
+    }
+
+    if (event.target instanceof Node && settingsMenu.contains(event.target)) {
+      return;
+    }
+
+    settingsMenu.open = false;
+  });
+}
 
 rectToolBtn.addEventListener("click", () => setCaptureTool("rect"));
 lassoToolBtn.addEventListener("click", () => setCaptureTool("lasso"));
@@ -799,8 +823,10 @@ if (clearRecoveryBtn) {
     
     screenshotManager.clear();
     localStorage.removeItem(AUTOSAVE_KEY);
-    mapNameBadge.textContent = "No map loaded";
-    clearRecoveryBtn.hidden = true;
+    if (!state.mapLoaded) {
+      mapNameBadge.textContent = "No map loaded";
+    }
+    updateClearRecoveryButtonVisibility();
     viewerHint.textContent = "Upload a map to start the interactive viewer.";
     showToast("Recovered data cleared");
   });
@@ -852,6 +878,7 @@ async function initializeApp() {
 
   await switchDbDelete(SWITCH_PAYLOAD_KEY).catch(() => {});
   await restoreAutosaveDraft();
+  updateClearRecoveryButtonVisibility();
 }
 
 appInitializationPromise = initializeApp()

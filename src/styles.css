@@ -152,6 +152,10 @@ code {
   transition: all 120ms ease;
 }
 
+.clear-recovery-btn[hidden] {
+  display: none;
+}
+
 .clear-recovery-btn:hover {
   background: rgba(248, 113, 113, 0.25);
   border-color: rgba(248, 113, 113, 0.6);

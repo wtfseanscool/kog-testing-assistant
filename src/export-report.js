@@ -19,8 +19,8 @@ function drawRoundedFill(ctx, x, y, w, h, r, fillStyle, strokeStyle = null) {
   }
 }
 
-function drawImageCover(ctx, image, x, y, w, h) {
-  const scale = Math.max(w / image.width, h / image.height);
+function drawImageContain(ctx, image, x, y, w, h) {
+  const scale = Math.min(w / image.width, h / image.height);
   const drawW = image.width * scale;
   const drawH = image.height * scale;
   const drawX = x + (w - drawW) / 2;
@@ -224,7 +224,7 @@ export function buildReportCanvas(mapName, shots) {
     ctx.fillStyle = frameGradient;
     ctx.fillRect(imageX, imageY, imageW, imageH);
 
-    drawImageCover(ctx, card.shot.imageCanvas, imageX, imageY, imageW, imageH);
+    drawImageContain(ctx, card.shot.imageCanvas, imageX, imageY, imageW, imageH);
 
     ctx.restore();
 
