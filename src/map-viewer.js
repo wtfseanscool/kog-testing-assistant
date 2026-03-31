@@ -96,7 +96,13 @@ async function loadRendererModule() {
     rendererModulePromise = (async () => {
       const mod = await import(/* @vite-ignore */ localModuleUrl);
       await mod.default();
-      if (typeof mod.map_position_from_logical !== "function") {
+      if (
+        typeof mod.map_position_from_logical !== "function" ||
+        typeof mod.set_view_mode !== "function" ||
+        typeof mod.set_entity_opacity !== "function" ||
+        typeof mod.set_entity_layer_visible !== "function" ||
+        typeof mod.set_entities_image_png !== "function"
+      ) {
         throw new Error("Renderer bundle missing exact coordinate API.");
       }
       return mod;
@@ -209,7 +215,7 @@ export class MapViewer {
 
   async resetEntitiesImage() {
     this.pendingEntitiesPng = null;
-    if (!this.loaded || typeof this.rendererApp?.set_entities_image_png !== "function") {
+    if (!this.rendererModule || typeof this.rendererModule.set_entities_image_png !== "function") {
       return;
     }
 
@@ -222,7 +228,7 @@ export class MapViewer {
       throw new Error("Could not fetch default entities.png.");
     }
     const buffer = await response.arrayBuffer();
-    this.rendererApp.set_entities_image_png(new Uint8Array(buffer));
+    this.rendererModule.set_entities_image_png(new Uint8Array(buffer));
   }
 
   isLoaded() {
@@ -292,25 +298,29 @@ export class MapViewer {
   }
 
   #applyEntityViewMode() {
-    if (!this.loaded || typeof this.rendererApp?.set_view_mode !== "function") {
+    if (!this.loaded || !this.rendererModule || typeof this.rendererModule.set_view_mode !== "function") {
       return;
     }
-    this.rendererApp.set_view_mode(this.#viewModeCode());
+    this.rendererModule.set_view_mode(this.#viewModeCode());
   }
 
   #applyEntityOpacity() {
-    if (!this.loaded || typeof this.rendererApp?.set_entity_opacity !== "function") {
+    if (!this.loaded || !this.rendererModule || typeof this.rendererModule.set_entity_opacity !== "function") {
       return;
     }
     try {
-      this.rendererApp.set_entity_opacity(this.entityConfig.mixedOpacity);
+      this.rendererModule.set_entity_opacity(this.entityConfig.mixedOpacity);
     } catch (error) {
       console.warn("Could not apply entity opacity.", error);
     }
   }
 
   #applyEntityLayerVisibility() {
-    if (!this.loaded || typeof this.rendererApp?.set_entity_layer_visible !== "function") {
+    if (
+      !this.loaded ||
+      !this.rendererModule ||
+      typeof this.rendererModule.set_entity_layer_visible !== "function"
+    ) {
       return;
     }
 
@@ -320,7 +330,7 @@ export class MapViewer {
         continue;
       }
       try {
-        this.rendererApp.set_entity_layer_visible(layerIndex, Boolean(visible));
+        this.rendererModule.set_entity_layer_visible(layerIndex, Boolean(visible));
       } catch (error) {
         console.warn(`Could not set entity layer visibility for ${layerKey}.`, error);
       }
@@ -331,12 +341,12 @@ export class MapViewer {
     if (!this.loaded || !this.pendingEntitiesPng) {
       return;
     }
-    if (typeof this.rendererApp?.set_entities_image_png !== "function") {
+    if (!this.rendererModule || typeof this.rendererModule.set_entities_image_png !== "function") {
       return;
     }
 
     try {
-      this.rendererApp.set_entities_image_png(this.pendingEntitiesPng);
+      this.rendererModule.set_entities_image_png(this.pendingEntitiesPng);
     } catch (error) {
       console.warn("Could not apply custom entities image.", error);
     }
