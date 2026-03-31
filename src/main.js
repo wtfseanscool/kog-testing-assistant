@@ -1,5 +1,6 @@
 import { parseMapMetadata } from "./map-metadata.js";
 import { MapViewer, canvasToPngDataUrl } from "./map-viewer.js";
+import { EntityOverlay } from "./entity-overlay.js";
 import { SelectionOverlay } from "./selection-overlay.js";
 import { ScreenshotManager } from "./screenshot-manager.js";
 import { buildReportCanvas, downloadCanvasPng } from "./export-report.js";
@@ -17,6 +18,7 @@ const exportReportBtn = document.querySelector("#export-report-btn");
 const mapNameBadge = document.querySelector("#map-name-badge");
 const clearRecoveryBtn = document.querySelector("#clear-recovery-btn");
 const mapCanvas = document.querySelector("#map-canvas");
+const entityCanvas = document.querySelector("#entity-canvas");
 const viewerStage = document.querySelector("#viewer-stage");
 const selectionCanvas = document.querySelector("#selection-canvas");
 const viewerHint = document.querySelector("#viewer-hint");
@@ -26,6 +28,17 @@ const mapSwitchModal = document.querySelector("#map-switch-modal");
 const mapSwitchClearBtn = document.querySelector("#map-switch-clear");
 const mapSwitchKeepBtn = document.querySelector("#map-switch-keep");
 const mapSwitchCancelBtn = document.querySelector("#map-switch-cancel");
+const viewModeSelect = document.querySelector("#view-mode");
+const mixedOpacityInput = document.querySelector("#mixed-opacity");
+const showEntityNumbersToggle = document.querySelector("#show-entity-numbers");
+const layerGameToggle = document.querySelector("#layer-game");
+const layerFrontToggle = document.querySelector("#layer-front");
+const layerTeleToggle = document.querySelector("#layer-tele");
+const layerSpeedupToggle = document.querySelector("#layer-speedup");
+const layerSwitchToggle = document.querySelector("#layer-switch");
+const layerTuneToggle = document.querySelector("#layer-tune");
+const entitiesUploadInput = document.querySelector("#entities-upload");
+const entitiesResetBtn = document.querySelector("#entities-reset");
 
 const AUTOSAVE_KEY = "kog-testing-assistant:autosave:v1";
 const SWITCH_DB_NAME = "kog-testing-assistant-switch";
@@ -37,6 +50,17 @@ const state = {
   sourceFileName: "",
   mapresMode: mapresModeSelect.value,
   autoCaptureEnabled: Boolean(autoCaptureToggle?.checked),
+  viewMode: viewModeSelect?.value ?? "design",
+  mixedOpacity: Number(mixedOpacityInput?.value ?? 55) / 100,
+  showEntityNumbers: Boolean(showEntityNumbersToggle?.checked),
+  entityLayerVisibility: {
+    game: Boolean(layerGameToggle?.checked),
+    front: Boolean(layerFrontToggle?.checked),
+    tele: Boolean(layerTeleToggle?.checked),
+    speedup: Boolean(layerSpeedupToggle?.checked),
+    switch: Boolean(layerSwitchToggle?.checked),
+    tune: Boolean(layerTuneToggle?.checked)
+  },
   mapLoaded: false
 };
 
@@ -47,6 +71,7 @@ let appInitializationPromise = null;
 let suppressUnloadPrompt = false;
 
 const mapViewer = new MapViewer(mapCanvas, viewerHint, () => state.mapresMode);
+const entityOverlay = new EntityOverlay({ mapCanvas, entityCanvas, mapViewer });
 const selectionOverlay = new SelectionOverlay(viewerStage, selectionCanvas);
 const screenshotManager = new ScreenshotManager(shotsList, shotTemplate);
 
@@ -141,6 +166,92 @@ async function copyCanvasToClipboard(canvas) {
   }
 }
 
+function buildEntitySettings() {
+  return {
+    viewMode: state.viewMode,
+    mixedOpacity: state.mixedOpacity,
+    showNumbers: state.showEntityNumbers,
+    layerVisibility: { ...state.entityLayerVisibility }
+  };
+}
+
+function applyEntitySettingsToOverlay() {
+  entityOverlay.setViewMode(state.viewMode);
+  entityOverlay.setMixedOpacity(state.mixedOpacity);
+  entityOverlay.setShowNumbers(state.showEntityNumbers);
+  entityOverlay.setLayerVisibility(state.entityLayerVisibility);
+}
+
+function syncEntitySettingsInputs() {
+  if (viewModeSelect) {
+    viewModeSelect.value = state.viewMode;
+  }
+  if (mixedOpacityInput) {
+    mixedOpacityInput.value = String(Math.round(state.mixedOpacity * 100));
+  }
+  if (showEntityNumbersToggle) {
+    showEntityNumbersToggle.checked = state.showEntityNumbers;
+  }
+  if (layerGameToggle) {
+    layerGameToggle.checked = state.entityLayerVisibility.game;
+  }
+  if (layerFrontToggle) {
+    layerFrontToggle.checked = state.entityLayerVisibility.front;
+  }
+  if (layerTeleToggle) {
+    layerTeleToggle.checked = state.entityLayerVisibility.tele;
+  }
+  if (layerSpeedupToggle) {
+    layerSpeedupToggle.checked = state.entityLayerVisibility.speedup;
+  }
+  if (layerSwitchToggle) {
+    layerSwitchToggle.checked = state.entityLayerVisibility.switch;
+  }
+  if (layerTuneToggle) {
+    layerTuneToggle.checked = state.entityLayerVisibility.tune;
+  }
+}
+
+function applyEntitySettings(settings) {
+  const defaultVisibility = {
+    game: true,
+    front: true,
+    tele: true,
+    speedup: true,
+    switch: true,
+    tune: true
+  };
+
+  state.viewMode = ["design", "entities", "mixed"].includes(settings?.viewMode)
+    ? settings.viewMode
+    : "design";
+
+  const mixedOpacity = Number(settings?.mixedOpacity);
+  state.mixedOpacity = Number.isFinite(mixedOpacity)
+    ? Math.max(0, Math.min(1, mixedOpacity))
+    : 0.55;
+
+  state.showEntityNumbers = Boolean(settings?.showNumbers);
+  state.entityLayerVisibility = {
+    ...defaultVisibility,
+    ...(settings?.layerVisibility ?? {})
+  };
+
+  syncEntitySettingsInputs();
+  applyEntitySettingsToOverlay();
+  updateMixedOpacityControlState();
+}
+
+function updateMixedOpacityControlState() {
+  if (!mixedOpacityInput) {
+    return;
+  }
+
+  const enabled = state.viewMode === "mixed";
+  mixedOpacityInput.disabled = !enabled;
+  mixedOpacityInput.style.opacity = enabled ? "1" : "0.45";
+}
+
 function buildProjectData() {
   return {
     version: 1,
@@ -148,6 +259,7 @@ function buildProjectData() {
     sourceFileName: state.sourceFileName,
     mapresMode: state.mapresMode,
     autoCaptureEnabled: state.autoCaptureEnabled,
+    entityView: buildEntitySettings(),
     screenshots: screenshotManager.getSerializableProject(),
     savedAt: new Date().toISOString()
   };
@@ -332,6 +444,8 @@ async function restoreAutosaveDraft() {
       autoCaptureToggle.checked = state.autoCaptureEnabled;
     }
 
+    applyEntitySettings(project.entityView);
+
     if (project.screenshots.length > 0) {
       await screenshotManager.loadSerializableProject(project.screenshots);
       mapNameBadge.textContent = `Recovered: ${state.mapName}`;
@@ -359,23 +473,28 @@ async function loadMapFromArrayBuffer(arrayBuffer, fileName) {
     let mapGeometry = {
       startPosition: { x: 0, y: 0 }
     };
+    let physicsLayers = null;
 
     state.mapName = fallbackMapName;
     state.sourceFileName = fileName;
+    entityOverlay.setMapLoaded(false);
 
     try {
       const metadata = parseMapMetadata(arrayBuffer, fileName);
       state.mapName = metadata.mapName || fallbackMapName;
       mapGeometry = metadata.mapGeometry ?? mapGeometry;
+      physicsLayers = metadata.physicsLayers ?? metadata.mapGeometry?.physicsLayers ?? null;
     } catch (metadataError) {
       console.warn("Metadata parse failed, continuing with filename.", metadataError);
     }
 
     mapNameBadge.textContent = `Map: ${state.mapName}`;
     mapViewer.setMapGeometry(mapGeometry);
+    entityOverlay.setPhysicsLayers(physicsLayers);
 
     await mapViewer.loadMap(arrayBuffer);
     state.mapLoaded = true;
+    entityOverlay.setMapLoaded(true);
     selectionOverlay.setEnabled(true);
     selectionOverlay.clear();
     captureBtn.disabled = true;
@@ -399,6 +518,7 @@ async function switchMapByReload(file, switchMode) {
       arrayBuffer: await file.arrayBuffer(),
       mapresMode: state.mapresMode,
       autoCaptureEnabled: state.autoCaptureEnabled,
+      entityView: buildEntitySettings(),
       keepScreenshots: switchMode === "keep",
       screenshots: switchMode === "keep" ? screenshotManager.getSerializableProject() : []
     };
@@ -469,7 +589,9 @@ async function onCaptureSelection() {
 
   captureInProgress = true;
   try {
-    const capture = mapViewer.captureFromSelection(selection);
+    const captureSource =
+      state.viewMode === "design" ? mapCanvas : entityOverlay.getCompositeCanvas();
+    const capture = mapViewer.captureFromSelection(selection, captureSource);
     const dataUrl = canvasToPngDataUrl(capture.imageCanvas);
     await screenshotManager.addFromDataUrl(
       dataUrl,
@@ -521,6 +643,8 @@ async function onLoadProject() {
     if (autoCaptureToggle) {
       autoCaptureToggle.checked = state.autoCaptureEnabled;
     }
+
+    applyEntitySettings(project.entityView);
 
     mapNameBadge.textContent = `Project: ${state.mapName}`;
     await screenshotManager.loadSerializableProject(project.screenshots);
@@ -591,6 +715,82 @@ if (autoCaptureToggle) {
   });
 }
 
+if (viewModeSelect) {
+  viewModeSelect.addEventListener("change", () => {
+    state.viewMode = viewModeSelect.value;
+    applyEntitySettingsToOverlay();
+    updateMixedOpacityControlState();
+    queueAutosave();
+  });
+}
+
+if (mixedOpacityInput) {
+  mixedOpacityInput.addEventListener("input", () => {
+    state.mixedOpacity = Number(mixedOpacityInput.value) / 100;
+    applyEntitySettingsToOverlay();
+    queueAutosave();
+  });
+}
+
+if (showEntityNumbersToggle) {
+  showEntityNumbersToggle.addEventListener("change", () => {
+    state.showEntityNumbers = showEntityNumbersToggle.checked;
+    applyEntitySettingsToOverlay();
+    queueAutosave();
+  });
+}
+
+function wireLayerToggle(element, layerKey) {
+  if (!element) {
+    return;
+  }
+  element.addEventListener("change", () => {
+    state.entityLayerVisibility[layerKey] = element.checked;
+    applyEntitySettingsToOverlay();
+    queueAutosave();
+  });
+}
+
+wireLayerToggle(layerGameToggle, "game");
+wireLayerToggle(layerFrontToggle, "front");
+wireLayerToggle(layerTeleToggle, "tele");
+wireLayerToggle(layerSpeedupToggle, "speedup");
+wireLayerToggle(layerSwitchToggle, "switch");
+wireLayerToggle(layerTuneToggle, "tune");
+
+if (entitiesUploadInput) {
+  entitiesUploadInput.addEventListener("change", async () => {
+    const file = entitiesUploadInput.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      await entityOverlay.loadCustomAtlasFile(file);
+      showToast("Custom entities atlas loaded");
+      queueAutosave();
+    } catch (error) {
+      console.error(error);
+      alert(`Could not load entities atlas: ${error.message}`);
+    } finally {
+      entitiesUploadInput.value = "";
+    }
+  });
+}
+
+if (entitiesResetBtn) {
+  entitiesResetBtn.addEventListener("click", async () => {
+    try {
+      await entityOverlay.resetAtlasToDefault();
+      showToast("Entities atlas reset to default");
+      queueAutosave();
+    } catch (error) {
+      console.error(error);
+      alert(`Could not reset entities atlas: ${error.message}`);
+    }
+  });
+}
+
 if (clearRecoveryBtn) {
   clearRecoveryBtn.addEventListener("click", () => {
     if (!confirm("Clear all recovered screenshots and start fresh?")) {
@@ -619,6 +819,8 @@ window.addEventListener("beforeunload", (event) => {
 
 async function initializeApp() {
   setCaptureTool("rect");
+  await entityOverlay.initialize();
+  applyEntitySettings(buildEntitySettings());
 
   const pendingPayload = await consumePendingSwitchPayload();
   if (pendingPayload?.arrayBuffer && pendingPayload?.fileName) {
@@ -631,6 +833,8 @@ async function initializeApp() {
     if (autoCaptureToggle) {
       autoCaptureToggle.checked = state.autoCaptureEnabled;
     }
+
+    applyEntitySettings(pendingPayload.entityView);
 
     if (pendingPayload.keepScreenshots && Array.isArray(pendingPayload.screenshots)) {
       await screenshotManager.loadSerializableProject(pendingPayload.screenshots);
