@@ -321,7 +321,7 @@ export class EntityOverlay {
   }
 
   #drawTile(tileId, tileX, tileY, bounds, tileDrawWidth, tileDrawHeight) {
-    const spriteIndex = tileId - 1;
+    const spriteIndex = tileId;
     if (spriteIndex < 0) {
       return;
     }
