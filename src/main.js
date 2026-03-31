@@ -1,6 +1,5 @@
 import { parseMapMetadata } from "./map-metadata.js";
 import { MapViewer, canvasToPngDataUrl } from "./map-viewer.js";
-import { EntityOverlay } from "./entity-overlay.js";
 import { SelectionOverlay } from "./selection-overlay.js";
 import { ScreenshotManager } from "./screenshot-manager.js";
 import { buildReportCanvas, downloadCanvasPng } from "./export-report.js";
@@ -18,7 +17,6 @@ const exportReportBtn = document.querySelector("#export-report-btn");
 const mapNameBadge = document.querySelector("#map-name-badge");
 const clearRecoveryBtn = document.querySelector("#clear-recovery-btn");
 const mapCanvas = document.querySelector("#map-canvas");
-const entityCanvas = document.querySelector("#entity-canvas");
 const viewerStage = document.querySelector("#viewer-stage");
 const selectionCanvas = document.querySelector("#selection-canvas");
 const viewerHint = document.querySelector("#viewer-hint");
@@ -42,6 +40,7 @@ const entitiesResetBtn = document.querySelector("#entities-reset");
 const settingsMenu = document.querySelector(".settings-menu");
 
 const AUTOSAVE_KEY = "kog-testing-assistant:autosave:v1";
+const CUSTOM_ENTITIES_STORAGE_KEY = "kog-testing-assistant:entities-atlas";
 const SWITCH_DB_NAME = "kog-testing-assistant-switch";
 const SWITCH_DB_STORE = "kv";
 const SWITCH_PAYLOAD_KEY = "pending-switch-payload";
@@ -72,7 +71,6 @@ let appInitializationPromise = null;
 let suppressUnloadPrompt = false;
 
 const mapViewer = new MapViewer(mapCanvas, viewerHint, () => state.mapresMode);
-const entityOverlay = new EntityOverlay({ mapCanvas, entityCanvas, mapViewer });
 const selectionOverlay = new SelectionOverlay(viewerStage, selectionCanvas);
 const screenshotManager = new ScreenshotManager(shotsList, shotTemplate);
 
@@ -171,16 +169,14 @@ function buildEntitySettings() {
   return {
     viewMode: state.viewMode,
     mixedOpacity: state.mixedOpacity,
-    showNumbers: state.showEntityNumbers,
     layerVisibility: { ...state.entityLayerVisibility }
   };
 }
 
 function applyEntitySettingsToOverlay() {
-  entityOverlay.setViewMode(state.viewMode);
-  entityOverlay.setMixedOpacity(state.mixedOpacity);
-  entityOverlay.setShowNumbers(state.showEntityNumbers);
-  entityOverlay.setLayerVisibility(state.entityLayerVisibility);
+  mapViewer.setViewMode(state.viewMode);
+  mapViewer.setMixedOpacity(state.mixedOpacity);
+  mapViewer.setEntityLayerVisibility(state.entityLayerVisibility);
 }
 
 function syncEntitySettingsInputs() {
@@ -191,7 +187,8 @@ function syncEntitySettingsInputs() {
     mixedOpacityInput.value = String(Math.round(state.mixedOpacity * 100));
   }
   if (showEntityNumbersToggle) {
-    showEntityNumbersToggle.checked = state.showEntityNumbers;
+    showEntityNumbersToggle.checked = false;
+    showEntityNumbersToggle.disabled = true;
   }
   if (layerGameToggle) {
     layerGameToggle.checked = state.entityLayerVisibility.game;
@@ -232,7 +229,7 @@ function applyEntitySettings(settings) {
     ? Math.max(0, Math.min(1, mixedOpacity))
     : 0.55;
 
-  state.showEntityNumbers = Boolean(settings?.showNumbers);
+  state.showEntityNumbers = false;
   state.entityLayerVisibility = {
     ...defaultVisibility,
     ...(settings?.layerVisibility ?? {})
@@ -467,6 +464,24 @@ async function restoreAutosaveDraft() {
   }
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Failed to read selected file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function dataUrlToUint8Array(dataUrl) {
+  const response = await fetch(dataUrl);
+  if (!response.ok) {
+    throw new Error("Could not decode cached entities image.");
+  }
+  const buffer = await response.arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
 async function loadMapFromArrayBuffer(arrayBuffer, fileName) {
   if (mapLoadInProgress) {
     throw new Error("A map is already loading. Please wait a moment and try again.");
@@ -480,28 +495,23 @@ async function loadMapFromArrayBuffer(arrayBuffer, fileName) {
     let mapGeometry = {
       startPosition: { x: 0, y: 0 }
     };
-    let physicsLayers = null;
 
     state.mapName = fallbackMapName;
     state.sourceFileName = fileName;
-    entityOverlay.setMapLoaded(false);
 
     try {
       const metadata = parseMapMetadata(arrayBuffer, fileName);
       state.mapName = metadata.mapName || fallbackMapName;
       mapGeometry = metadata.mapGeometry ?? mapGeometry;
-      physicsLayers = metadata.physicsLayers ?? metadata.mapGeometry?.physicsLayers ?? null;
     } catch (metadataError) {
       console.warn("Metadata parse failed, continuing with filename.", metadataError);
     }
 
     mapNameBadge.textContent = `Map: ${state.mapName}`;
     mapViewer.setMapGeometry(mapGeometry);
-    entityOverlay.setPhysicsLayers(physicsLayers);
 
     await mapViewer.loadMap(arrayBuffer);
     state.mapLoaded = true;
-    entityOverlay.setMapLoaded(true);
     selectionOverlay.setEnabled(true);
     selectionOverlay.clear();
     captureBtn.disabled = true;
@@ -597,9 +607,7 @@ async function onCaptureSelection() {
 
   captureInProgress = true;
   try {
-    const captureSource =
-      state.viewMode === "design" ? mapCanvas : entityOverlay.getCompositeCanvas();
-    const capture = mapViewer.captureFromSelection(selection, captureSource);
+    const capture = mapViewer.captureFromSelection(selection, mapCanvas);
     const dataUrl = canvasToPngDataUrl(capture.imageCanvas);
     await screenshotManager.addFromDataUrl(
       dataUrl,
@@ -790,7 +798,13 @@ if (entitiesUploadInput) {
     }
 
     try {
-      await entityOverlay.loadCustomAtlasFile(file);
+      const [bytes, dataUrl] = await Promise.all([
+        file.arrayBuffer().then((buffer) => new Uint8Array(buffer)),
+        fileToDataUrl(file)
+      ]);
+
+      await mapViewer.setEntitiesImagePng(bytes);
+      localStorage.setItem(CUSTOM_ENTITIES_STORAGE_KEY, dataUrl);
       showToast("Custom entities atlas loaded");
       queueAutosave();
     } catch (error) {
@@ -805,7 +819,8 @@ if (entitiesUploadInput) {
 if (entitiesResetBtn) {
   entitiesResetBtn.addEventListener("click", async () => {
     try {
-      await entityOverlay.resetAtlasToDefault();
+      localStorage.removeItem(CUSTOM_ENTITIES_STORAGE_KEY);
+      await mapViewer.resetEntitiesImage();
       showToast("Entities atlas reset to default");
       queueAutosave();
     } catch (error) {
@@ -845,8 +860,18 @@ window.addEventListener("beforeunload", (event) => {
 
 async function initializeApp() {
   setCaptureTool("rect");
-  await entityOverlay.initialize();
   applyEntitySettings(buildEntitySettings());
+
+  const cachedEntitiesAtlas = localStorage.getItem(CUSTOM_ENTITIES_STORAGE_KEY);
+  if (cachedEntitiesAtlas) {
+    try {
+      const cachedBytes = await dataUrlToUint8Array(cachedEntitiesAtlas);
+      await mapViewer.setEntitiesImagePng(cachedBytes);
+    } catch (error) {
+      console.warn("Could not restore cached entities atlas.", error);
+      localStorage.removeItem(CUSTOM_ENTITIES_STORAGE_KEY);
+    }
+  }
 
   const pendingPayload = await consumePendingSwitchPayload();
   if (pendingPayload?.arrayBuffer && pendingPayload?.fileName) {

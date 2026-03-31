@@ -639,17 +639,11 @@ input[type="range"]::-moz-range-progress {
 }
 
 #map-canvas,
-#entity-canvas,
 #selection-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-}
-
-#entity-canvas {
-  z-index: 1;
-  pointer-events: none;
 }
 
 #selection-canvas {

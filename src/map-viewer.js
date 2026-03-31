@@ -1,6 +1,15 @@
 const TRANSPARENT_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAoMBgN11m1wAAAAASUVORK5CYII=";
 
+const ENTITY_LAYER_INDEX = {
+  game: 0,
+  front: 1,
+  tele: 2,
+  speedup: 3,
+  switch: 4,
+  tune: 5
+};
+
 let rendererModulePromise = null;
 let fetchProxyInstalled = false;
 
@@ -119,6 +128,19 @@ export class MapViewer {
     this.rendererApp = null;
     this.rendererModule = null;
     this.loaded = false;
+    this.entityConfig = {
+      viewMode: "design",
+      mixedOpacity: 0.55,
+      layerVisibility: {
+        game: true,
+        front: true,
+        tele: true,
+        speedup: true,
+        switch: true,
+        tune: true
+      }
+    };
+    this.pendingEntitiesPng = null;
 
     installMapresFetchProxy(() => this.getMapresMode());
   }
@@ -145,8 +167,56 @@ export class MapViewer {
     }
 
     this.loaded = true;
+
+    await this.#applyEntityConfig();
     this.hintElement.textContent =
       "Drag to select area. Mouse wheel or trackpad to zoom. Left drag to pan.";
+  }
+
+  setViewMode(mode) {
+    if (["design", "entities", "mixed"].includes(mode)) {
+      this.entityConfig.viewMode = mode;
+      this.#applyEntityViewMode();
+    }
+  }
+
+  setMixedOpacity(value) {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    this.entityConfig.mixedOpacity = Math.max(0, Math.min(1, value));
+    this.#applyEntityOpacity();
+  }
+
+  setEntityLayerVisibility(layerVisibility) {
+    this.entityConfig.layerVisibility = {
+      ...this.entityConfig.layerVisibility,
+      ...layerVisibility
+    };
+    this.#applyEntityLayerVisibility();
+  }
+
+  async setEntitiesImagePng(bytes) {
+    this.pendingEntitiesPng = new Uint8Array(bytes);
+    await this.#applyEntitiesImage();
+  }
+
+  async resetEntitiesImage() {
+    this.pendingEntitiesPng = null;
+    if (!this.loaded || typeof this.rendererApp?.set_entities_image_png !== "function") {
+      return;
+    }
+
+    const defaultEntitiesUrl = new URL(
+      `${import.meta.env.BASE_URL}entities.png`,
+      window.location.href
+    );
+    const response = await fetch(defaultEntitiesUrl);
+    if (!response.ok) {
+      throw new Error("Could not fetch default entities.png.");
+    }
+    const buffer = await response.arrayBuffer();
+    this.rendererApp.set_entities_image_png(new Uint8Array(buffer));
   }
 
   isLoaded() {
@@ -196,6 +266,74 @@ export class MapViewer {
       return null;
     }
     return { x, y };
+  }
+
+  #viewModeCode() {
+    if (this.entityConfig.viewMode === "entities") {
+      return 1;
+    }
+    if (this.entityConfig.viewMode === "mixed") {
+      return 2;
+    }
+    return 0;
+  }
+
+  async #applyEntityConfig() {
+    this.#applyEntityViewMode();
+    this.#applyEntityOpacity();
+    this.#applyEntityLayerVisibility();
+    await this.#applyEntitiesImage();
+  }
+
+  #applyEntityViewMode() {
+    if (!this.loaded || typeof this.rendererApp?.set_view_mode !== "function") {
+      return;
+    }
+    this.rendererApp.set_view_mode(this.#viewModeCode());
+  }
+
+  #applyEntityOpacity() {
+    if (!this.loaded || typeof this.rendererApp?.set_entity_opacity !== "function") {
+      return;
+    }
+    try {
+      this.rendererApp.set_entity_opacity(this.entityConfig.mixedOpacity);
+    } catch (error) {
+      console.warn("Could not apply entity opacity.", error);
+    }
+  }
+
+  #applyEntityLayerVisibility() {
+    if (!this.loaded || typeof this.rendererApp?.set_entity_layer_visible !== "function") {
+      return;
+    }
+
+    for (const [layerKey, visible] of Object.entries(this.entityConfig.layerVisibility)) {
+      const layerIndex = ENTITY_LAYER_INDEX[layerKey];
+      if (layerIndex == null) {
+        continue;
+      }
+      try {
+        this.rendererApp.set_entity_layer_visible(layerIndex, Boolean(visible));
+      } catch (error) {
+        console.warn(`Could not set entity layer visibility for ${layerKey}.`, error);
+      }
+    }
+  }
+
+  async #applyEntitiesImage() {
+    if (!this.loaded || !this.pendingEntitiesPng) {
+      return;
+    }
+    if (typeof this.rendererApp?.set_entities_image_png !== "function") {
+      return;
+    }
+
+    try {
+      this.rendererApp.set_entities_image_png(this.pendingEntitiesPng);
+    } catch (error) {
+      console.warn("Could not apply custom entities image.", error);
+    }
   }
 
   #captureRect(cssRect, sourceCanvas) {

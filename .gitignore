@@ -6,4 +6,5 @@ vendor-twgpu
 vendor-twgpu-full
 twgpu-build-3
 twgpu-build-5
+twgpu-native
 .vscode/
