@@ -64,6 +64,64 @@
                   <span>Auto-add screenshot after selection</span>
                 </label>
 
+                <label class="select-wrap select-wrap-compact">
+                  <span>View Mode</span>
+                  <select id="view-mode">
+                    <option value="design">Design</option>
+                    <option value="entities">Entities</option>
+                    <option value="mixed">Mixed</option>
+                  </select>
+                </label>
+
+                <label class="settings-range">
+                  <span>Entities Opacity</span>
+                  <input id="mixed-opacity" type="range" min="0" max="100" value="55" />
+                </label>
+
+                <label class="settings-check">
+                  <input id="show-entity-numbers" type="checkbox" />
+                  <span>Show Entity Numbers</span>
+                </label>
+
+                <div class="settings-layer-block">
+                  <span>Physics Layers</span>
+                  <div class="settings-layer-grid">
+                    <label class="settings-check settings-check-compact">
+                      <input id="layer-game" type="checkbox" checked />
+                      <span>Game</span>
+                    </label>
+                    <label class="settings-check settings-check-compact">
+                      <input id="layer-front" type="checkbox" checked />
+                      <span>Front</span>
+                    </label>
+                    <label class="settings-check settings-check-compact">
+                      <input id="layer-tele" type="checkbox" checked />
+                      <span>Tele</span>
+                    </label>
+                    <label class="settings-check settings-check-compact">
+                      <input id="layer-speedup" type="checkbox" checked />
+                      <span>Speedup</span>
+                    </label>
+                    <label class="settings-check settings-check-compact">
+                      <input id="layer-switch" type="checkbox" checked />
+                      <span>Switch</span>
+                    </label>
+                    <label class="settings-check settings-check-compact">
+                      <input id="layer-tune" type="checkbox" checked />
+                      <span>Tune</span>
+                    </label>
+                  </div>
+                </div>
+
+                <label class="file-btn ghost-btn settings-btn">
+                  <input id="entities-upload" type="file" accept="image/png" />
+                  <span>Load Custom Entities PNG</span>
+                </label>
+
+                <button id="entities-reset" class="ghost-btn settings-btn" type="button">
+                  Reset Entities PNG
+                </button>
+
                 <button id="save-project-btn" class="ghost-btn settings-btn" type="button">
                   Save Project JSON
                 </button>
@@ -93,6 +151,7 @@
 
           <div class="viewer-stage" id="viewer-stage">
             <canvas id="map-canvas"></canvas>
+            <canvas id="entity-canvas"></canvas>
             <canvas id="selection-canvas"></canvas>
             <div class="viewer-hint" id="viewer-hint">
               Upload a map to start the interactive viewer.

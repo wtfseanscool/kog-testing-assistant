@@ -153,16 +153,16 @@ export class MapViewer {
     return this.loaded;
   }
 
-  captureFromSelection(selection) {
+  captureFromSelection(selection, sourceCanvas = this.canvas) {
     if (!this.loaded) {
       throw new Error("Load a map before capturing screenshots.");
     }
 
     let imageCanvas = null;
     if (selection.kind === "rect") {
-      imageCanvas = this.#captureRect(selection.rect);
+      imageCanvas = this.#captureRect(selection.rect, sourceCanvas);
     } else if (selection.kind === "lasso") {
-      imageCanvas = this.#captureLasso(selection.points);
+      imageCanvas = this.#captureLasso(selection.points, sourceCanvas);
     } else {
       throw new Error("Unknown selection type.");
     }
@@ -179,15 +179,34 @@ export class MapViewer {
     };
   }
 
-  #captureRect(cssRect) {
+  mapPositionFromLogical(logicalX, logicalY) {
+    if (
+      !this.rendererModule ||
+      typeof this.rendererModule.map_position_from_logical !== "function"
+    ) {
+      return null;
+    }
+
+    const clampedX = clamp01(logicalX);
+    const clampedY = clamp01(logicalY);
+    const coords = this.rendererModule.map_position_from_logical(clampedX, clampedY);
+    const x = Number(coords?.[0]);
+    const y = Number(coords?.[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    return { x, y };
+  }
+
+  #captureRect(cssRect, sourceCanvas) {
     const pxRect = this.#cssRectToPixelRect(cssRect);
-    const bounded = clampRect(pxRect, this.canvas.width, this.canvas.height);
+    const bounded = clampRect(pxRect, sourceCanvas.width, sourceCanvas.height);
     const out = document.createElement("canvas");
     out.width = bounded.w;
     out.height = bounded.h;
     const ctx = out.getContext("2d", { alpha: true });
     ctx.drawImage(
-      this.canvas,
+      sourceCanvas,
       bounded.x,
       bounded.y,
       bounded.w,
@@ -200,7 +219,7 @@ export class MapViewer {
     return out;
   }
 
-  #captureLasso(cssPoints) {
+  #captureLasso(cssPoints, sourceCanvas) {
     if (!cssPoints.length) {
       throw new Error("Lasso selection is empty.");
     }
@@ -220,8 +239,8 @@ export class MapViewer {
 
     minX = Math.floor(Math.max(0, minX));
     minY = Math.floor(Math.max(0, minY));
-    maxX = Math.ceil(Math.min(this.canvas.width, maxX));
-    maxY = Math.ceil(Math.min(this.canvas.height, maxY));
+    maxX = Math.ceil(Math.min(sourceCanvas.width, maxX));
+    maxY = Math.ceil(Math.min(sourceCanvas.height, maxY));
 
     const width = Math.max(1, maxX - minX);
     const height = Math.max(1, maxY - minY);
@@ -240,7 +259,7 @@ export class MapViewer {
     ctx.closePath();
     ctx.clip();
 
-    ctx.drawImage(this.canvas, -minX, -minY);
+    ctx.drawImage(sourceCanvas, -minX, -minY);
     ctx.restore();
 
     return out;
@@ -275,22 +294,9 @@ export class MapViewer {
   }
 
   #mapCoordinatesFromCssPoint(point) {
-    if (
-      !this.rendererModule ||
-      typeof this.rendererModule.map_position_from_logical !== "function"
-    ) {
-      return null;
-    }
-
     const logicalX = clamp01(point.x / Math.max(1, this.canvas.clientWidth));
     const logicalY = clamp01(point.y / Math.max(1, this.canvas.clientHeight));
-    const coords = this.rendererModule.map_position_from_logical(logicalX, logicalY);
-    const x = Number(coords?.[0]);
-    const y = Number(coords?.[1]);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      return null;
-    }
-    return { x, y };
+    return this.mapPositionFromLogical(logicalX, logicalY);
   }
 
   #cssRectToPixelRect(cssRect) {

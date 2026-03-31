@@ -205,25 +205,294 @@ function getInfoItem(items) {
   return items.find((item) => item.typeId === 1 && item.id === 0) ?? null;
 }
 
-function getGameLayerItem(items) {
-  return (
-    items.find(
-      (item) =>
-        item.typeId === 5 &&
-        item.data.length >= 15 &&
-        item.data[1] === 2 &&
-        (item.data[6] & 1) === 1
-    ) ?? null
-  );
+const TILE_LAYER_KIND_BY_FLAG = {
+  0: "tiles",
+  1: "game",
+  2: "tele",
+  4: "speedup",
+  8: "front",
+  16: "switch",
+  32: "tune"
+};
+
+const TILE_LAYER_DATA_INDEX = {
+  tiles: 14,
+  game: 14,
+  tele: 18,
+  speedup: 19,
+  front: 20,
+  switch: 21,
+  tune: 22
+};
+
+function inferTileLayerKind(layerItem) {
+  if (layerItem.typeId !== 5 || layerItem.data.length < 7) {
+    return null;
+  }
+
+  if (layerItem.data[1] !== 2) {
+    return null;
+  }
+
+  return TILE_LAYER_KIND_BY_FLAG[layerItem.data[6]] ?? null;
 }
 
-function averageSpawnPosition(width, height, tileBytes) {
-  if (width <= 0 || height <= 0 || !tileBytes || tileBytes.byteLength < 4) {
+function getLayerDataItemIndex(layerItem, layerKind) {
+  const baseIndex = TILE_LAYER_DATA_INDEX[layerKind];
+  if (baseIndex == null) {
+    return -1;
+  }
+
+  const version = layerItem.data[3] ?? 1;
+  const index = version >= 3 || baseIndex <= 14 ? baseIndex : baseIndex - 3;
+  if (index < 0 || index >= layerItem.data.length) {
+    return -1;
+  }
+
+  return layerItem.data[index];
+}
+
+function decodeGameLikeTiles(layerBytes, totalTiles, allowSkipCompression) {
+  const ids = new Uint8Array(totalTiles);
+  const flags = new Uint8Array(totalTiles);
+
+  if (!layerBytes || layerBytes.byteLength === 0 || totalTiles <= 0) {
+    return { ids, flags };
+  }
+
+  const entries = Math.floor(layerBytes.byteLength / 4);
+  if (entries >= totalTiles || !allowSkipCompression) {
+    const limit = Math.min(totalTiles, entries);
+    for (let i = 0; i < limit; i += 1) {
+      const base = i * 4;
+      ids[i] = layerBytes[base] ?? 0;
+      flags[i] = layerBytes[base + 1] ?? 0;
+    }
+    return { ids, flags };
+  }
+
+  let tileIndex = 0;
+  for (let entry = 0; entry < entries && tileIndex < totalTiles; entry += 1) {
+    const base = entry * 4;
+    const id = layerBytes[base] ?? 0;
+    const flag = layerBytes[base + 1] ?? 0;
+    const skip = layerBytes[base + 2] ?? 0;
+    const repeat = Math.max(1, skip + 1);
+
+    for (let i = 0; i < repeat && tileIndex < totalTiles; i += 1) {
+      ids[tileIndex] = id;
+      flags[tileIndex] = flag;
+      tileIndex += 1;
+    }
+  }
+
+  return { ids, flags };
+}
+
+function decodeTeleTiles(layerBytes, totalTiles) {
+  const ids = new Uint8Array(totalTiles);
+  const numbers = new Uint8Array(totalTiles);
+
+  if (!layerBytes || layerBytes.byteLength === 0 || totalTiles <= 0) {
+    return { ids, numbers };
+  }
+
+  const stride = layerBytes.byteLength >= totalTiles * 4 ? 4 : 2;
+  const maxTiles = Math.min(totalTiles, Math.floor(layerBytes.byteLength / stride));
+  for (let tileIndex = 0; tileIndex < maxTiles; tileIndex += 1) {
+    const offset = tileIndex * stride;
+    numbers[tileIndex] = layerBytes[offset] ?? 0;
+    ids[tileIndex] = layerBytes[offset + 1] ?? 0;
+  }
+
+  return { ids, numbers };
+}
+
+function decodeSwitchTiles(layerBytes, totalTiles) {
+  const ids = new Uint8Array(totalTiles);
+  const numbers = new Uint8Array(totalTiles);
+  const flags = new Uint8Array(totalTiles);
+  const delays = new Uint8Array(totalTiles);
+
+  if (!layerBytes || layerBytes.byteLength === 0 || totalTiles <= 0) {
+    return { ids, numbers, flags, delays };
+  }
+
+  let stride = 0;
+  if (layerBytes.byteLength >= totalTiles * 4) {
+    stride = 4;
+  } else if (layerBytes.byteLength >= totalTiles * 3) {
+    stride = 3;
+  } else if (layerBytes.byteLength >= totalTiles * 2) {
+    stride = 2;
+  }
+
+  if (stride === 0) {
+    return { ids, numbers, flags, delays };
+  }
+
+  const maxTiles = Math.min(totalTiles, Math.floor(layerBytes.byteLength / stride));
+  for (let tileIndex = 0; tileIndex < maxTiles; tileIndex += 1) {
+    const offset = tileIndex * stride;
+    numbers[tileIndex] = layerBytes[offset] ?? 0;
+    ids[tileIndex] = layerBytes[offset + 1] ?? 0;
+    flags[tileIndex] = stride >= 3 ? layerBytes[offset + 2] ?? 0 : 0;
+    delays[tileIndex] = stride >= 4 ? layerBytes[offset + 3] ?? 0 : 0;
+  }
+
+  return { ids, numbers, flags, delays };
+}
+
+function decodeSpeedupTiles(layerBytes, totalTiles) {
+  const ids = new Uint8Array(totalTiles);
+  const force = new Uint8Array(totalTiles);
+  const maxSpeed = new Uint8Array(totalTiles);
+  const angles = new Int16Array(totalTiles);
+
+  if (!layerBytes || layerBytes.byteLength === 0 || totalTiles <= 0) {
+    return { ids, force, maxSpeed, angles };
+  }
+
+  const stride = layerBytes.byteLength >= totalTiles * 6 ? 6 : layerBytes.byteLength >= totalTiles * 4 ? 4 : 0;
+  if (stride === 0) {
+    return { ids, force, maxSpeed, angles };
+  }
+
+  const maxTiles = Math.min(totalTiles, Math.floor(layerBytes.byteLength / stride));
+  for (let tileIndex = 0; tileIndex < maxTiles; tileIndex += 1) {
+    const offset = tileIndex * stride;
+    force[tileIndex] = layerBytes[offset] ?? 0;
+
+    if (stride >= 6) {
+      maxSpeed[tileIndex] = layerBytes[offset + 1] ?? 0;
+      ids[tileIndex] = layerBytes[offset + 2] ?? 0;
+      angles[tileIndex] = (layerBytes[offset + 4] ?? 0) | ((layerBytes[offset + 5] ?? 0) << 8);
+    } else {
+      maxSpeed[tileIndex] = 0;
+      ids[tileIndex] = 28;
+      angles[tileIndex] = (layerBytes[offset + 2] ?? 0) | ((layerBytes[offset + 3] ?? 0) << 8);
+    }
+  }
+
+  return { ids, force, maxSpeed, angles };
+}
+
+function decodeTuneTiles(layerBytes, totalTiles) {
+  const ids = new Uint8Array(totalTiles);
+  const numbers = new Uint8Array(totalTiles);
+
+  if (!layerBytes || layerBytes.byteLength === 0 || totalTiles <= 0) {
+    return { ids, numbers };
+  }
+
+  const stride = layerBytes.byteLength >= totalTiles * 4 ? 4 : 2;
+  const maxTiles = Math.min(totalTiles, Math.floor(layerBytes.byteLength / stride));
+  for (let tileIndex = 0; tileIndex < maxTiles; tileIndex += 1) {
+    const offset = tileIndex * stride;
+    numbers[tileIndex] = layerBytes[offset] ?? 0;
+    ids[tileIndex] = layerBytes[offset + 1] ?? 0;
+  }
+
+  return { ids, numbers };
+}
+
+function decodePhysicsLayer(layerKind, layerBytes, totalTiles, allowSkipCompression) {
+  if (layerKind === "game" || layerKind === "front") {
+    return {
+      kind: layerKind,
+      ...decodeGameLikeTiles(layerBytes, totalTiles, allowSkipCompression)
+    };
+  }
+
+  if (layerKind === "tele") {
+    return {
+      kind: layerKind,
+      ...decodeTeleTiles(layerBytes, totalTiles)
+    };
+  }
+
+  if (layerKind === "switch") {
+    return {
+      kind: layerKind,
+      ...decodeSwitchTiles(layerBytes, totalTiles)
+    };
+  }
+
+  if (layerKind === "speedup") {
+    return {
+      kind: layerKind,
+      ...decodeSpeedupTiles(layerBytes, totalTiles)
+    };
+  }
+
+  if (layerKind === "tune") {
+    return {
+      kind: layerKind,
+      ...decodeTuneTiles(layerBytes, totalTiles)
+    };
+  }
+
+  return null;
+}
+
+function parsePhysicsLayers(items, dataItems) {
+  const result = {
+    width: 0,
+    height: 0,
+    layers: {
+      game: null,
+      front: null,
+      tele: null,
+      speedup: null,
+      switch: null,
+      tune: null
+    }
+  };
+
+  const tileLayers = items.filter((item) => item.typeId === 5 && item.data.length >= 15);
+  for (const layerItem of tileLayers) {
+    const layerKind = inferTileLayerKind(layerItem);
+    if (!layerKind || layerKind === "tiles") {
+      continue;
+    }
+
+    const width = layerItem.data[4] ?? 0;
+    const height = layerItem.data[5] ?? 0;
+    if (width <= 0 || height <= 0) {
+      continue;
+    }
+
+    if (result.width === 0 || result.height === 0 || layerKind === "game") {
+      result.width = width;
+      result.height = height;
+    }
+
+    const dataIndex = getLayerDataItemIndex(layerItem, layerKind);
+    if (dataIndex < 0 || dataIndex >= dataItems.length) {
+      continue;
+    }
+
+    const layerBytes = dataItems[dataIndex];
+    const totalTiles = width * height;
+    const allowSkipCompression = layerKind === "game";
+    const decoded = decodePhysicsLayer(layerKind, layerBytes, totalTiles, allowSkipCompression);
+    if (!decoded) {
+      continue;
+    }
+
+    result.layers[layerKind] = decoded;
+  }
+
+  return result;
+}
+
+function averageSpawnPosition(width, height, gameLayer) {
+  if (width <= 0 || height <= 0 || !gameLayer?.ids) {
     return { x: 0, y: 0 };
   }
 
   const totalTiles = width * height;
-  const packedEntries = Math.floor(tileBytes.byteLength / 4);
+  const ids = gameLayer.ids;
 
   let spawnSumX = 0;
   let spawnSumY = 0;
@@ -240,22 +509,9 @@ function averageSpawnPosition(width, height, tileBytes) {
     spawnCount += 1;
   };
 
-  if (packedEntries >= totalTiles) {
-    for (let tileIndex = 0; tileIndex < totalTiles; tileIndex += 1) {
-      registerSpawn(tileIndex, tileBytes[tileIndex * 4]);
-    }
-  } else {
-    let tileIndex = 0;
-    for (let entry = 0; entry < packedEntries && tileIndex < totalTiles; entry += 1) {
-      const base = entry * 4;
-      const tileId = tileBytes[base];
-      const skip = tileBytes[base + 2] ?? 0;
-      const repeat = Math.max(1, skip + 1);
-      for (let i = 0; i < repeat && tileIndex < totalTiles; i += 1) {
-        registerSpawn(tileIndex, tileId);
-        tileIndex += 1;
-      }
-    }
+  const limit = Math.min(totalTiles, ids.length);
+  for (let tileIndex = 0; tileIndex < limit; tileIndex += 1) {
+    registerSpawn(tileIndex, ids[tileIndex]);
   }
 
   if (spawnCount === 0) {
@@ -269,27 +525,25 @@ function averageSpawnPosition(width, height, tileBytes) {
 }
 
 function parseMapGeometry(items, dataItems) {
-  const gameLayer = getGameLayerItem(items);
-  if (!gameLayer) {
+  const physicsLayers = parsePhysicsLayers(items, dataItems);
+  const width = physicsLayers.width;
+  const height = physicsLayers.height;
+  const gameLayer = physicsLayers.layers.game;
+
+  if (!gameLayer || width <= 0 || height <= 0) {
     return {
       width: 0,
       height: 0,
-      startPosition: { x: 0, y: 0 }
+      startPosition: { x: 0, y: 0 },
+      physicsLayers
     };
   }
-
-  const width = gameLayer.data[4] ?? 0;
-  const height = gameLayer.data[5] ?? 0;
-  const tileDataIndex = gameLayer.data[14] ?? -1;
-  const tileBytes =
-    tileDataIndex >= 0 && tileDataIndex < dataItems.length
-      ? dataItems[tileDataIndex]
-      : new Uint8Array();
 
   return {
     width,
     height,
-    startPosition: averageSpawnPosition(width, height, tileBytes)
+    startPosition: averageSpawnPosition(width, height, gameLayer),
+    physicsLayers
   };
 }
 
@@ -372,6 +626,7 @@ export function parseMapMetadata(arrayBuffer, fileName) {
       mapName: fallbackName,
       datafileVersion: header.formatVersion,
       mapGeometry,
+      physicsLayers: mapGeometry.physicsLayers,
       info: {
         author: "",
         version: "",
@@ -396,6 +651,7 @@ export function parseMapMetadata(arrayBuffer, fileName) {
     mapName: inferMapName(info.settings, fallbackName),
     datafileVersion: header.formatVersion,
     mapGeometry,
+    physicsLayers: mapGeometry.physicsLayers,
     info
   };
 }
