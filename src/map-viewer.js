@@ -49,6 +49,12 @@ function installMapresFetchProxy(getMode) {
     const requestUrl = resolveRequestUrl(input);
     const mode = getMode();
 
+    if (requestUrl && requestUrl.pathname === "/entities.png") {
+      const base = new URL(import.meta.env.BASE_URL, window.location.href);
+      const localUrl = new URL("entities.png", base);
+      return originalFetch(localUrl, init);
+    }
+
     if (requestUrl && /^\/mapres_0[67]\//.test(requestUrl.pathname)) {
       if (mode === "embedded") {
         return new Response(transparentPngBytes, {
