@@ -189,6 +189,7 @@ export class MapViewer {
     if (["design", "entities", "mixed"].includes(mode)) {
       this.entityConfig.viewMode = mode;
       this.#applyEntityViewMode();
+      this.#applyEntityOpacity();
     }
   }
 
@@ -309,7 +310,8 @@ export class MapViewer {
       return;
     }
     try {
-      this.rendererModule.set_entity_opacity(this.entityConfig.mixedOpacity);
+      const opacity = this.entityConfig.viewMode === "mixed" ? this.entityConfig.mixedOpacity : 1;
+      this.rendererModule.set_entity_opacity(opacity);
     } catch (error) {
       console.warn("Could not apply entity opacity.", error);
     }
